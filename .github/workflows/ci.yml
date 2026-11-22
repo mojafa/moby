@@ -13,10 +13,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 'master'
-      - '[0-9]+.[0-9]+'
-      - '[0-9]+.x'
-  pull_request:
+      - 'homer-bench'
 
 env:
   DESTDIR: ./build
@@ -24,40 +21,28 @@ env:
   SETUP_BUILDKIT_IMAGE: moby/buildkit:latest
 
 jobs:
-  validate-dco:
-    permissions:
-      pull-requests: read
-    uses: ./.github/workflows/.dco.yml
-
   build:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20 # guardrails timeout for the whole job
-    needs:
-      - validate-dco
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-26.04
+          - runner: [self-hosted, homer-bench]
             target: binary
-          - runner: ubuntu-26.04
-            target: dynbinary
-          - runner: ubuntu-26.04-arm
-            target: binary
-          - runner: ubuntu-26.04-arm
+          - runner: [self-hosted, homer-bench]
             target: dynbinary
     steps:
       -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: ${{ env.SETUP_BUILDX_VERSION }}
-          driver-opts: image=${{ env.SETUP_BUILDKIT_IMAGE }}
-          buildkitd-flags: --debug
+        name: Use persistent Buildx builder
+        run: |
+          docker buildx inspect homer-warm >/dev/null 2>&1 || docker buildx create --name homer-warm --driver docker-container --driver-opt image=${{ env.SETUP_BUILDKIT_IMAGE }} --buildkitd-flags '--debug'
+          docker buildx inspect --bootstrap homer-warm >/dev/null
       -
         name: Build
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
+          builder: homer-warm
           targets: ${{ matrix.target }}
       -
         name: List artifacts
@@ -69,11 +54,9 @@ jobs:
           find ${{ env.DESTDIR }} -type f -exec file -e ascii -- {} +
 
   prepare-cross:
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     timeout-minutes: 20 # guardrails timeout for the whole job
     if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ci/validate-only') }}
-    needs:
-      - validate-dco
     outputs:
       includes: ${{ steps.gen.outputs.matrix }}
     steps:
@@ -89,11 +72,10 @@ jobs:
           fields: platforms
 
   cross:
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     timeout-minutes: 20 # guardrails timeout for the whole job
     if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ci/validate-only') }}
     needs:
-      - validate-dco
       - prepare-cross
     strategy:
       fail-fast: false
@@ -107,16 +89,15 @@ jobs:
         run: |
           echo "PLATFORM_PAIR=${PLATFORM//\//-}" >> $GITHUB_ENV
       -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: ${{ env.SETUP_BUILDX_VERSION }}
-          driver-opts: image=${{ env.SETUP_BUILDKIT_IMAGE }}
-          buildkitd-flags: --debug
+        name: Use persistent Buildx builder
+        run: |
+          docker buildx inspect homer-warm >/dev/null 2>&1 || docker buildx create --name homer-warm --driver docker-container --driver-opt image=${{ env.SETUP_BUILDKIT_IMAGE }} --buildkitd-flags '--debug'
+          docker buildx inspect --bootstrap homer-warm >/dev/null
       -
         name: Build
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
+          builder: homer-warm
           targets: ${{ matrix.target }}
           set: |
             *.platform=${{ matrix.platforms }}
@@ -130,7 +111,7 @@ jobs:
           find ${{ env.DESTDIR }} -type f -exec file -e ascii -- {} +
 
   govulncheck:
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     timeout-minutes: 120 # guardrails timeout for the whole job
     # Always run security checks, even with 'ci/validate-only' label
     permissions:
@@ -138,16 +119,15 @@ jobs:
       security-events: write # required to write sarif report
     steps:
       -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: ${{ env.SETUP_BUILDX_VERSION }}
-          driver-opts: image=${{ env.SETUP_BUILDKIT_IMAGE }}
-          buildkitd-flags: --debug
+        name: Use persistent Buildx builder
+        run: |
+          docker buildx inspect homer-warm >/dev/null 2>&1 || docker buildx create --name homer-warm --driver docker-container --driver-opt image=${{ env.SETUP_BUILDKIT_IMAGE }} --buildkitd-flags '--debug'
+          docker buildx inspect --bootstrap homer-warm >/dev/null
       -
         name: Run
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
+          builder: homer-warm
           targets: govulncheck
         env:
           GOVULNCHECK_FORMAT: sarif
@@ -159,33 +139,29 @@ jobs:
           sarif_file: ${{ env.DESTDIR }}/govulncheck.out
 
   build-dind:
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     timeout-minutes: 120 # guardrails timeout for the whole job
     if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'ci/validate-only') }}
-    needs:
-      - validate-dco
     steps:
       -
-        name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: ${{ env.SETUP_BUILDX_VERSION }}
-          driver-opts: image=${{ env.SETUP_BUILDKIT_IMAGE }}
-          buildkitd-flags: --debug
+        name: Use persistent Buildx builder
+        run: |
+          docker buildx inspect homer-warm >/dev/null 2>&1 || docker buildx create --name homer-warm --driver docker-container --driver-opt image=${{ env.SETUP_BUILDKIT_IMAGE }} --buildkitd-flags '--debug'
+          docker buildx inspect --bootstrap homer-warm >/dev/null
       -
         name: Build dind image
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
+          builder: homer-warm
           targets: dind
           set: |
             *.output=type=cacheonly
 
   success:
     name: CI Build Success
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     if: ${{ always() }}
     needs:
-      - validate-dco
       - build
       - prepare-cross
       - cross
@@ -204,7 +180,7 @@ jobs:
   # TODO(vvoland): Remove once most PRs have rebased
   build-binary:
     name: build (binary)
-    runs-on: ubuntu-26.04
+    runs-on: [self-hosted, homer-bench]
     if: ${{ always() }}
     needs:
       - success
